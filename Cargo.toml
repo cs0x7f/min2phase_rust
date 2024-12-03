@@ -1,0 +1,15 @@
+[package]
+name = "min2phase"
+authors = ["Chen Shuang <cs0x7f@gmail.com>"]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+keywords = ["Rubik's Cube", "Two-phase Algorithm"]
+readme = "README.md"
+description = "An optimized implementation of two-phase algorithm for solving Rubik's cube"
+repository = "https://github.com/cs0x7f/min2phase_rust"
+
+[dependencies]
+rand = "0.8"
+lazy_static = "1.5.0"
+
