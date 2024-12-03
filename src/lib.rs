@@ -185,17 +185,6 @@ impl Cubie {
 		}
 	}
 
-	#[cfg(debug_assertions)]
-	fn print(&self) {
-		for i in 0..8 {
-			print!("{:2} ", self.ca[i]);
-		}
-		for i in 0..12 {
-			print!(" {:2}", self.ea[i]);
-		}
-		println!();
-	}
-
 	fn cmp(&self, other: &Cubie) -> i8 {
 		for i in 0..8 {
 			if self.ca[i] != other.ca[i] {
