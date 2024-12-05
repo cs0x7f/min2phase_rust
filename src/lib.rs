@@ -16,24 +16,33 @@ struct Coord {
 	flip: u16,
 	fsym: u16,
 	slice: u16,
-	prun: u16,
+	prun: i8,
+}
+
+#[derive(Clone, Copy)]
+struct Coord2 {
+	edge: u16,
+	esym: u16,
+	corn: u16,
+	csym: u16,
+	mid: u16
 }
 
 #[repr(C)]
 struct Solution {
-	depth1: u8,
+	depth1: i8,
 	verbose: u8,
 	urf_idx: u8,
-	premv_len: u8,
-	length: u8,
+	premv_len: i8,
+	length: i8,
 	moves: [u8; 31],
 }
 
 const INVERSE_SOLUTION: u8 = 0x01;
 const USE_SEPARATOR: u8 = 0x02;
 const APPEND_LENGTH: u8 = 0x04;
-const MAX_PREMV_LEN: u8 = 20;
-const MIN_P1PRE_LEN: u8 = 7;
+const MAX_PREMV_LEN: i8 = 20;
+const MIN_P1PRE_LEN: i8 = 7;
 
 const N_FLIP     : usize =  2048;
 const N_FLIP_SYM : usize =   336;
@@ -156,16 +165,16 @@ impl Solution {
 struct IdaContext {
 	mv: [u8; 30],
 	allow_shorter: bool,
-	depth1: u8,
-	length1: u8,
-	valid1: u8,
+	depth1: i8,
+	length1: i8,
+	valid1: i8,
 	urf_idx: u8,
 	p1_cubies: [Cubie; 20],
 	urf_cubies: [Cubie; 6],
 	premv: [u8; 15],
-	premv_len: u8,
+	premv_len: i8,
 	max_depth2: i8,
-	target_length: u8,
+	target_length: i8,
 	probes: u64,
 	min_probes: u64,
 	solution: Solution,
@@ -873,7 +882,7 @@ impl StaticTables {
 	}
 }
 
-fn get_perm_sym_inv(sctx: &StaticContext, stbl: &StaticTables, idx: i32, sym: i32, is_corner: i32) -> u16 {
+fn get_perm_sym_inv(sctx: &StaticContext, stbl: &StaticTables, idx: u16, sym: u16, is_corner: i32) -> u16 {
 	let idxi = stbl.perm_sym_inv[idx as usize];
 	let mut result = if is_corner != 0 {
 		esym2csym(idxi)
@@ -892,56 +901,71 @@ impl Coord {
 			flip: 0u16,
 			fsym: 0u16,
 			slice: 0u16,
-			prun: 0u16
+			prun: 0i8
 		}
 	}
-	fn from_cubie(
-		&mut self,
-		stbl: &StaticTables,
-		src: &Cubie,
-	) -> u16 {
-		self.slice = src.get_slice();
 
+	fn from_cubie(&mut self, stbl: &StaticTables, src: &Cubie) -> i8 {
+		self.slice = src.get_slice();
 		self.flip = stbl.flip_raw2sym[src.get_flip() as usize];
 		self.fsym = self.flip & 7;
 		self.flip >>= 3;
-
 		self.twst = stbl.twst_raw2sym[src.get_twst() as usize];
 		self.tsym = self.twst & 7;
 		self.twst >>= 3;
-
 		self.prun = std::cmp::max(
 			get_pruning(&stbl.slice_twst_prun, self.twst as usize * N_SLICE + stbl.slice_conj[(self.slice * 8 + self.tsym) as usize] as usize),
 			get_pruning(&stbl.slice_flip_prun, self.flip as usize * N_SLICE + stbl.slice_conj[(self.slice * 8 + self.fsym) as usize] as usize)
-		) as u16;
+		) as i8;
 		self.prun
 	}
 
-	fn move_prun(
-		&mut self,
-		sctx: &StaticContext,
-		stbl: &StaticTables,
-		src: &Coord,
-		mv: usize,
-	) -> u16 {
+	fn move_prun(&mut self, sctx: &StaticContext, stbl: &StaticTables, src: &Coord, mv: usize) -> i8 {
 		self.slice = stbl.slice_move[src.slice as usize * N_MOVES_P1 + mv];
-
 		self.flip = stbl.flip_move[src.flip as usize * N_MOVES_P1 + sctx.symmove[mv][src.fsym as usize] as usize];
 		self.fsym = (self.flip & 7) ^ src.fsym;
 		self.flip >>= 3;
-
 		self.twst = stbl.twst_move[src.twst as usize * N_MOVES_P1 + sctx.symmove[mv][src.tsym as usize] as usize];
 		self.tsym = (self.twst & 7) ^ src.tsym;
 		self.twst >>= 3;
-
 		self.prun = std::cmp::max(
 			get_pruning(&stbl.slice_twst_prun, self.twst as usize * N_SLICE + stbl.slice_conj[(self.slice * 8 + self.tsym) as usize] as usize),
 			get_pruning(&stbl.slice_flip_prun, self.flip as usize * N_SLICE + stbl.slice_conj[(self.slice * 8 + self.fsym) as usize] as usize)
-		) as u16;
+		) as i8;
 		self.prun
 	}
 }
 
+impl Coord2 {
+	fn new() -> Self {
+		Coord2 {
+			edge: 0u16,
+			esym: 0u16,
+			corn: 0u16,
+			csym: 0u16,
+			mid: 0u16
+		}
+	}
+
+	fn from_cubie(&mut self, sctx: &StaticContext, stbl: &StaticTables, src: &Cubie) -> i8 {
+		self.corn = esym2csym(stbl.eperm_raw2sym[src.get_cperm() as usize]) as u16;
+		self.csym = self.corn & 0xf;
+		self.corn = self.corn >> 4;
+		self.edge = stbl.eperm_raw2sym[src.get_eperm() as usize] as u16;
+		self.esym = self.edge & 0xf;
+		self.edge = self.edge >> 4;
+		self.mid = src.get_mperm() as u16;
+		let edgei = get_perm_sym_inv(sctx, stbl, self.edge, self.esym, 0);
+		let corni = get_perm_sym_inv(sctx, stbl, self.corn, self.csym, 1);
+		std::cmp::max(
+			get_pruning(&stbl.ccomb_eperm_prun, (edgei >> 4) as usize * N_CCOMB + stbl.ccomb_conj[stbl.cperm2comb[corni as usize >> 4] as usize * 16 + sctx.symmuli[edgei as usize & 0xf][corni as usize & 0xf] as usize] as usize),
+			std::cmp::max(
+				get_pruning(&stbl.ccomb_eperm_prun, self.edge as usize * N_CCOMB + stbl.ccomb_conj[stbl.cperm2comb[self.corn as usize] as usize * 16 + sctx.symmuli[self.esym as usize][self.csym as usize] as usize] as usize),
+				get_pruning(&stbl.mperm_cperm_prun, self.corn as usize * N_MPERM + stbl.mperm_conj[self.mid as usize * 16 + self.csym as usize] as usize)
+			)
+		) as i8
+	}
+}
 
 impl IdaContext {
 	pub fn new() -> Self {
@@ -971,8 +995,7 @@ impl IdaContext {
 		}
 	}
 
-	pub fn solve_cubie(&mut self, sctx: &StaticContext, stbl: &StaticTables,
-			cc: &Cubie, target_length: u8) -> String {
+	pub fn solve_cubie(&mut self, sctx: &StaticContext, stbl: &StaticTables, cc: &Cubie, target_length: i8) -> String {
 		let mut cc1 = *cc;
 		let mut cc2 = Cubie::new();
 		self.target_length = target_length + 1;
@@ -996,7 +1019,7 @@ impl IdaContext {
 			for urf_idx in 0..6 {
 				self.urf_idx = urf_idx;
 				let cc = self.urf_cubies[self.urf_idx as usize];
-				let ret = self.phase1_pre_moves(sctx, stbl, MAX_PREMV_LEN as i32, -30, &cc, 0);
+				let ret = self.phase1_pre_moves(sctx, stbl, MAX_PREMV_LEN as i8, -30, &cc, 0);
 				if ret == 0 {
 					let solbuf = self.solution.to_string();
 					#[cfg(debug_assertions)]
@@ -1011,16 +1034,15 @@ impl IdaContext {
 	}
 
 	fn phase1_pre_moves(&mut self, sctx: &StaticContext, stbl: &StaticTables,
-		maxl: i32, lm: i32, cc: &Cubie, _ssym: i32,
-	) -> i32 {
-		self.premv_len = MAX_PREMV_LEN - maxl as u8;
-		if self.premv_len == 0 || ((0o227227 >> lm) & 1) == 0 {
+			maxl: i8, lm: i8, cc: &Cubie, _ssym: i32) -> i32 {
+		self.premv_len = MAX_PREMV_LEN - maxl;
+		if self.premv_len == 0 || ((0o667667 >> lm) & 1) == 0 {
 			self.depth1 = self.length1 - self.premv_len;
 			self.allow_shorter = self.depth1 == MIN_P1PRE_LEN && self.premv_len != 0;
 			self.p1_cubies[0] = *cc;
 			let mut node = Coord::new();
-			if node.from_cubie(stbl, &self.p1_cubies[0]) <= self.depth1 as u16 {
-				let ret = self.phase1(sctx, stbl, &node, 0, self.depth1 as i32, -1);
+			if node.from_cubie(stbl, &self.p1_cubies[0]) <= self.depth1 {
+				let ret = self.phase1(sctx, stbl, &node, 0, self.depth1, -1);
 				if ret == 0 {
 					return 0;
 				}
@@ -1054,34 +1076,34 @@ impl IdaContext {
 		1
 	}
 
-
-	fn phase1(&mut self, sctx: &StaticContext, stbl: &StaticTables, node: &Coord, _ssym: i32, maxl: i32, lm: i32) -> i32 {
+	fn phase1(&mut self, sctx: &StaticContext, stbl: &StaticTables,
+			node: &Coord, _ssym: i32, maxl: i8, lm: i8) -> i8 {
 		let mut next_node: Coord = Coord::new();
 		if node.prun == 0 && maxl < 5 {
 			if self.allow_shorter || maxl == 0 {
-				self.depth1 -= maxl as u8;
+				self.depth1 -= maxl;
 				let ret = self.init_phase2(sctx, stbl);
-				self.depth1 += maxl as u8;
+				self.depth1 += maxl;
 				return ret;
 			} else {
 				return 1;
 			}
 		}
-		for axis in (0..N_MOVES_P1 as i32).step_by(3) {
+		for axis in (0..N_MOVES_P1 as i8).step_by(3) {
 			if axis == lm || axis == lm - 9 {
 				continue;
 			}
 			for power in 0..3 {
 				let m = axis + power;
-				let prun = next_node.move_prun(sctx, stbl, node, m as usize) as i32;
+				let prun = next_node.move_prun(sctx, stbl, node, m as usize);
 				if prun > maxl {
 					break;
 				} else if prun == maxl {
 					continue;
 				}
 				self.mv[self.depth1 as usize - maxl as usize] = m as u8;
-				self.valid1 = self.valid1.min(self.depth1 - maxl as u8);
-				let ret = self.phase1(sctx, stbl, &next_node, 0, maxl - 1, axis as i32);
+				self.valid1 = self.valid1.min(self.depth1 - maxl);
+				let ret = self.phase1(sctx, stbl, &next_node, 0, maxl - 1, axis);
 				if ret == 0 {
 					return 0;
 				} else if ret >= 2 {
@@ -1092,39 +1114,36 @@ impl IdaContext {
 		1
 	}
 
-	fn init_phase2(&mut self, sctx: &StaticContext, stbl: &StaticTables) -> i32 {
+	fn init_phase2(&mut self, sctx: &StaticContext, stbl: &StaticTables) -> i8 {
 		self.probes += 1;
 		let mut cc = Cubie::new();
-		for i in self.valid1..self.depth1 {
-			Cubie::corn_mult(&self.p1_cubies[i as usize], &sctx.movecube[self.mv[i as usize] as usize], &mut cc);
-			Cubie::edge_mult(&self.p1_cubies[i as usize], &sctx.movecube[self.mv[i as usize] as usize], &mut cc);
-			self.p1_cubies[(i + 1) as usize] = cc;
+		for i in self.valid1 as usize..self.depth1 as usize {
+			Cubie::corn_mult(&self.p1_cubies[i], &sctx.movecube[self.mv[i] as usize], &mut cc);
+			Cubie::edge_mult(&self.p1_cubies[i], &sctx.movecube[self.mv[i] as usize], &mut cc);
+			self.p1_cubies[i + 1] = cc;
 		}
 		self.valid1 = self.depth1;
-		let p2corn = esym2csym(stbl.eperm_raw2sym[self.p1_cubies[self.depth1 as usize].get_cperm() as usize]) as i32;
-		let p2csym = p2corn & 0xf;
-		let p2corn = p2corn >> 4;
-		let p2edge = stbl.eperm_raw2sym[self.p1_cubies[self.depth1 as usize].get_eperm() as usize] as i32;
-		let p2esym = p2edge & 0xf;
-		let p2edge = p2edge >> 4;
-		let p2mid = self.p1_cubies[self.depth1 as usize].get_mperm() as i32;
-		let edgei = get_perm_sym_inv(sctx, stbl, p2edge, p2esym, 0);
-		let corni = get_perm_sym_inv(sctx, stbl, p2corn, p2csym, 1);
-		let prun = std::cmp::max(
-			get_pruning(&stbl.ccomb_eperm_prun, (edgei >> 4) as usize * N_CCOMB + stbl.ccomb_conj[stbl.cperm2comb[corni as usize >> 4] as usize * 16 + sctx.symmuli[edgei as usize & 0xf][corni as usize & 0xf] as usize] as usize),
-			std::cmp::max(
-				get_pruning(&stbl.ccomb_eperm_prun, p2edge as usize * N_CCOMB + stbl.ccomb_conj[stbl.cperm2comb[p2corn as usize] as usize * 16 + sctx.symmuli[p2esym as usize][p2csym as usize] as usize] as usize),
-				get_pruning(&stbl.mperm_cperm_prun, p2corn as usize * N_MPERM + stbl.mperm_conj[p2mid as usize * 16 + p2csym as usize] as usize)
-			)
-		) as u8;
-
-		if prun as i8 > self.max_depth2 {
-			return (prun as i32) - (self.max_depth2 as i32);
+		let mut node1 = Coord2::new();
+		let mut prun = node1.from_cubie(sctx, stbl, &cc);
+		let mut node2 = Coord2::new();
+		if self.premv_len > 0 {
+			let m = self.premv[self.premv_len as usize - 1] as usize / 3 * 3 + 1;
+			let mut cd = Cubie::new();
+			Cubie::corn_mult(&sctx.movecube[m], &cc, &mut cd);
+			Cubie::edge_mult(&sctx.movecube[m], &cc, &mut cd);
+			prun = prun.min(node2.from_cubie(sctx, stbl, &cd));
 		}
-
-		let mut depth2 = self.max_depth2 as i32;
-		while depth2 >= prun as i32 {
-			let ret = self.phase2(sctx, stbl, p2edge, p2esym, p2corn, p2csym, p2mid, depth2 as i32, self.depth1 as i32, 10);
+		if prun > self.max_depth2 {
+			return prun - self.max_depth2;
+		}
+		let mut depth2 = self.max_depth2;
+		while depth2 >= prun {
+			let mut sol_src = 0;
+			let mut ret = self.phase2(sctx, stbl, &node1, depth2, self.depth1, 10);
+			if ret < 0 && self.premv_len > 0 {
+				sol_src = 1;
+				ret = self.phase2(sctx, stbl, &node2, depth2, self.depth1, 10);
+			}
 			if ret < 0 {
 				break;
 			}
@@ -1134,8 +1153,11 @@ impl IdaContext {
 			self.solution.urf_idx = self.urf_idx;
 			self.solution.depth1 = self.depth1;
 			self.solution.premv_len = self.premv_len;
-			for i in 0..self.depth1 as i32 + depth2 {
+			for i in 0..self.depth1 + depth2 {
 				self.solution.append_move(self.mv[i as usize]);
+			}
+			if sol_src == 1 {
+				self.solution.append_move(self.premv[self.premv_len as usize - 1] / 3 * 3 + 1);
 			}
 			for i in (0..self.premv_len).rev() {
 				self.solution.append_move(self.premv[i as usize]);
@@ -1144,49 +1166,49 @@ impl IdaContext {
 			depth2 -= 1;
 		}
 
-		if depth2 != self.max_depth2 as i32 { // 至少找到了一个解
-			self.max_depth2 = std::cmp::min(MAX_DEPTH2 as i8, self.target_length as i8 - self.length1 as i8 - 1);
+		if depth2 != self.max_depth2 {
+			self.max_depth2 = std::cmp::min(MAX_DEPTH2 as i8, self.target_length as i8 - self.length1 - 1);
 			return if self.probes >= self.min_probes { 0 } else { 1 };
 		}
 		1
 	}
 
-	fn phase2(&mut self,
-			sctx: &StaticContext, stbl: &StaticTables,
-			edge: i32, esym: i32, corn: i32, csym: i32, mid: i32, maxl: i32, depth: i32, lm: i32) -> i32 {
-		if edge == 0 && corn == 0 && mid == 0 {
+	fn phase2(&mut self, sctx: &StaticContext, stbl: &StaticTables,
+			node: &Coord2, maxl: i8, depth: i8, lm: i8) -> i8 {
+		if node.edge == 0 && node.corn == 0 && node.mid == 0 {
 			return maxl;
 		}
 		let move_mask = sctx.canon_masks2[lm as usize];
+		let mut nodex = Coord2::new();
 		for m in 0..N_MOVES_P2 {
 			if (move_mask >> m & 1) != 0 {
 				continue;
 			}
-			let midx = stbl.mperm_move[mid as usize * N_MOVES_P2 + m] as usize;
-			let cornx = stbl.cperm_move[corn as usize * N_MOVES_P2 + sctx.symmove2[m][csym as usize] as usize] as usize;
-			let csymx = sctx.symmult[cornx as usize & 0xf][csym as usize] as usize;
-			let cornx = cornx >> 4;
-			let edgex = stbl.eperm_move[edge as usize * N_MOVES_P2 + sctx.symmove2[m][esym as usize] as usize] as usize;
-			let esymx = sctx.symmult[edgex as usize & 0xf][esym as usize] as usize;
-			let edgex = edgex >> 4;
-			let edgei = get_perm_sym_inv(sctx, stbl, edgex as i32, esymx as i32, 0) as usize;
-			let corni = get_perm_sym_inv(sctx, stbl, cornx as i32, csymx as i32, 1) as usize;
+			nodex.mid = stbl.mperm_move[node.mid as usize * N_MOVES_P2 + m];
+			nodex.corn = stbl.cperm_move[node.corn as usize * N_MOVES_P2 + sctx.symmove2[m][node.csym as usize] as usize];
+			nodex.csym = sctx.symmult[nodex.corn as usize & 0xf][node.csym as usize] as u16;
+			nodex.corn = nodex.corn >> 4;
+			nodex.edge = stbl.eperm_move[node.edge as usize * N_MOVES_P2 + sctx.symmove2[m][node.esym as usize] as usize];
+			nodex.esym = sctx.symmult[nodex.edge as usize & 0xf][node.esym as usize] as u16;
+			nodex.edge = nodex.edge >> 4;
+			let edgei = get_perm_sym_inv(sctx, stbl, nodex.edge, nodex.esym, 0) as usize;
+			let corni = get_perm_sym_inv(sctx, stbl, nodex.corn, nodex.csym, 1) as usize;
 			let prun = get_pruning(&stbl.ccomb_eperm_prun,
 				(edgei >> 4) as usize * N_CCOMB +
-				stbl.ccomb_conj[stbl.cperm2comb[corni as usize >> 4] as usize * 16 + sctx.symmuli[edgei as usize & 0xf][corni as usize & 0xf] as usize] as usize) as i32;
+				stbl.ccomb_conj[stbl.cperm2comb[corni as usize >> 4] as usize * 16 + sctx.symmuli[edgei as usize & 0xf][corni as usize & 0xf] as usize] as usize) as i8;
 			if prun > maxl + 1 {
 				return maxl - prun + 1;
 			} else if prun >= maxl {
 				continue;
 			}
 			let prun = std::cmp::max(
-				get_pruning(&stbl.mperm_cperm_prun, cornx as usize * N_MPERM + stbl.mperm_conj[midx as usize * 16 + csymx as usize] as usize),
-				get_pruning(&stbl.ccomb_eperm_prun, edgex as usize * N_CCOMB + stbl.ccomb_conj[stbl.cperm2comb[cornx as usize] as usize * 16 + sctx.symmuli[esymx][csymx] as usize] as usize)
-			) as i32;
+				get_pruning(&stbl.mperm_cperm_prun, nodex.corn as usize * N_MPERM + stbl.mperm_conj[nodex.mid as usize * 16 + nodex.csym as usize] as usize),
+				get_pruning(&stbl.ccomb_eperm_prun, nodex.edge as usize * N_CCOMB + stbl.ccomb_conj[stbl.cperm2comb[nodex.corn as usize] as usize * 16 + sctx.symmuli[nodex.esym as usize][nodex.csym as usize] as usize] as usize)
+			) as i8;
 			if prun >= maxl {
 				continue;
 			}
-			let ret = self.phase2(sctx, stbl, edgex as i32, esymx as i32, cornx as i32, csymx as i32, midx as i32, maxl - 1, depth + 1, m as i32);
+			let ret = self.phase2(sctx, stbl, &nodex, maxl - 1, depth + 1, m as i8);
 			if ret >= 0 {
 				self.mv[depth as usize] = P2MOVES[m];
 				return ret;
@@ -1356,7 +1378,7 @@ pub fn solve(facelet: &String, maxl: u8) -> String {
 		return String::from("Error ") + &(-verify).to_string();
 	}
 	let mut ctx = IdaContext::new();
-	return ctx.solve_cubie(&global_sctx, &global_stbl, &cc, maxl)
+	return ctx.solve_cubie(&global_sctx, &global_stbl, &cc, std::cmp::min(25, maxl) as i8)
 }
 
 pub fn random_cube() -> String {
