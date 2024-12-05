@@ -24,6 +24,7 @@ struct Solution {
 	depth1: u8,
 	verbose: u8,
 	urf_idx: u8,
+	premv_len: u8,
 	length: u8,
 	moves: [u8; 31],
 }
@@ -31,6 +32,8 @@ struct Solution {
 const INVERSE_SOLUTION: u8 = 0x01;
 const USE_SEPARATOR: u8 = 0x02;
 const APPEND_LENGTH: u8 = 0x04;
+const MAX_PREMV_LEN: u8 = 20;
+const MIN_P1PRE_LEN: u8 = 7;
 
 const N_FLIP     : usize =  2048;
 const N_FLIP_SYM : usize =   336;
@@ -157,7 +160,6 @@ struct IdaContext {
 	length1: u8,
 	valid1: u8,
 	urf_idx: u8,
-	nodes: [Coord; 20],
 	p1_cubies: [Cubie; 20],
 	urf_cubies: [Cubie; 6],
 	premv: [u8; 15],
@@ -437,8 +439,8 @@ struct StaticContext {
 }
 
 impl StaticContext {
-	fn new() -> Self {
-		let mut sctx = StaticContext {
+	fn box_new() -> Box<Self> {
+		let mut sctx = Box::new(StaticContext {
 			movecube: [Cubie::new(); 18],
 			symcube: [Cubie::new(); 16],
 			symmult: [[0; 16]; 16],
@@ -448,7 +450,7 @@ impl StaticContext {
 			canon_masks2: [0; 11],
 			symurf: Cubie::new(),
 			symurfi: Cubie::new(),
-		};
+		});
 		sctx.init();
 		sctx
 	}
@@ -827,8 +829,8 @@ fn init_raw_sym_prun(
 }
 
 impl StaticTables {
-	fn new(sctx: &StaticContext) -> Self {
-		let mut stbl = StaticTables {
+	fn box_new(sctx: &StaticContext) -> Box<Self> {
+		let mut stbl = Box::new(StaticTables {
 			perm_sym_inv : [0u16; N_PERM_SYM],
 			cperm2comb   : [0u8; N_PERM_SYM],
 			flip_sym2raw : [0u16; N_FLIP_SYM],
@@ -854,7 +856,7 @@ impl StaticTables {
 			slice_twst_prun : [0u32; N_SLICE * N_TWST_SYM / 8 + 1],
 			ccomb_eperm_prun: [0u32; N_CCOMB * N_PERM_SYM / 8 + 1],
 			mperm_cperm_prun: [0u32; N_MPERM * N_PERM_SYM / 8 + 1],
-		};
+		});
 		stbl.init(&sctx);
 		stbl
 	}
@@ -942,6 +944,117 @@ impl Coord {
 
 
 impl IdaContext {
+	pub fn new() -> Self {
+		IdaContext {
+			mv: [0; 30],
+			allow_shorter: false,
+			depth1: 0,
+			length1: 0,
+			valid1: 0,
+			urf_idx: 0,
+			p1_cubies: [Cubie::new(); 20],
+			urf_cubies: [Cubie::new(); 6],
+			premv: [0; 15],
+			premv_len: 0,
+			max_depth2: 0,
+			target_length: 0,
+			probes: 0,
+			min_probes: 0,
+			solution: Solution {
+				depth1: 0,
+				verbose: 0,
+				urf_idx: 0,
+				premv_len: 0,
+				length: 0,
+				moves: [0; 31],
+			},
+		}
+	}
+
+	pub fn solve_cubie(&mut self, sctx: &StaticContext, stbl: &StaticTables,
+			cc: &Cubie, target_length: u8) -> String {
+		let mut cc1 = *cc;
+		let mut cc2 = Cubie::new();
+		self.target_length = target_length + 1;
+		self.probes = 0;
+		for i in 0..6 {
+			self.urf_cubies[i] = cc1;
+			Cubie::corn_mult(&sctx.symurfi, &cc1, &mut cc2);
+			Cubie::edge_mult(&sctx.symurfi, &cc1, &mut cc2);
+			Cubie::corn_mult(&cc2, &sctx.symurf, &mut cc1);
+			Cubie::edge_mult(&cc2, &sctx.symurf, &mut cc1);
+			if i == 2 {
+				Cubie::inv(&cc1, &mut cc2);
+				cc1 = cc2;
+			}
+		}
+		for length1 in 0..21 {
+			self.length1 = length1;
+			self.max_depth2 = std::cmp::min(MAX_DEPTH2 as i8, self.target_length as i8 - self.length1 as i8 - 1);
+			self.depth1 = self.length1 - self.premv_len;
+			self.allow_shorter = false;
+			for urf_idx in 0..6 {
+				self.urf_idx = urf_idx;
+				let cc = self.urf_cubies[self.urf_idx as usize];
+				let ret = self.phase1_pre_moves(sctx, stbl, MAX_PREMV_LEN as i32, -30, &cc, 0);
+				if ret == 0 {
+					let solbuf = self.solution.to_string();
+					#[cfg(debug_assertions)]
+					println!("solution found in {:2}+{:2} moves urf={} premv={} probe={:5}: {}",
+						self.length1, self.solution.length - self.length1,
+						self.solution.urf_idx, self.solution.premv_len, self.probes, solbuf);
+					return solbuf;
+				}
+			}
+		}
+		String::from("Error 8")
+	}
+
+	fn phase1_pre_moves(&mut self, sctx: &StaticContext, stbl: &StaticTables,
+		maxl: i32, lm: i32, cc: &Cubie, _ssym: i32,
+	) -> i32 {
+		self.premv_len = MAX_PREMV_LEN - maxl as u8;
+		if self.premv_len == 0 || ((0o227227 >> lm) & 1) == 0 {
+			self.depth1 = self.length1 - self.premv_len;
+			self.allow_shorter = self.depth1 == MIN_P1PRE_LEN && self.premv_len != 0;
+			self.p1_cubies[0] = *cc;
+			let mut node = Coord::new();
+			if node.from_cubie(stbl, &self.p1_cubies[0]) <= self.depth1 as u16 {
+				let ret = self.phase1(sctx, stbl, &node, 0, self.depth1 as i32, -1);
+				if ret == 0 {
+					return 0;
+				}
+			}
+		}
+		if maxl == 0 || self.premv_len + MIN_P1PRE_LEN >= self.length1 {
+			return 1;
+		}
+		let skip_moves = if maxl == 1 || self.premv_len + 1 + MIN_P1PRE_LEN >= self.length1 {
+			0o227227
+		} else {
+			0
+		};
+		let mut cd = Cubie::new();
+		let lm = lm / 3;
+		for m in 0..18 {
+			if m / 3 == lm || m / 3 == lm - 3 || m / 3 == lm + 3 {
+				continue;
+			}
+			if (skip_moves & (1 << m)) != 0 {
+				continue;
+			}
+			Cubie::corn_mult(&sctx.movecube[m as usize], cc, &mut cd);
+			Cubie::edge_mult(&sctx.movecube[m as usize], cc, &mut cd);
+			self.premv[MAX_PREMV_LEN as usize - maxl as usize] = m as u8;
+			let ret = self.phase1_pre_moves(sctx, stbl, maxl - 1, m, &cd, 0);
+			if ret == 0 {
+				return 0;
+			}
+		}
+		1
+	}
+
+
 	fn phase1(&mut self, sctx: &StaticContext, stbl: &StaticTables, node: &Coord, _ssym: i32, maxl: i32, lm: i32) -> i32 {
 		let mut next_node: Coord = Coord::new();
 		if node.prun == 0 && maxl < 5 {
@@ -954,21 +1067,18 @@ impl IdaContext {
 				return 1;
 			}
 		}
-
 		for axis in (0..N_MOVES_P1 as i32).step_by(3) {
 			if axis == lm || axis == lm - 9 {
 				continue;
 			}
 			for power in 0..3 {
 				let m = axis + power;
-
 				let prun = next_node.move_prun(sctx, stbl, node, m as usize) as i32;
 				if prun > maxl {
 					break;
 				} else if prun == maxl {
 					continue;
 				}
-
 				self.mv[self.depth1 as usize - maxl as usize] = m as u8;
 				self.valid1 = self.valid1.min(self.depth1 - maxl as u8);
 				let ret = self.phase1(sctx, stbl, &next_node, 0, maxl - 1, axis as i32);
@@ -991,7 +1101,6 @@ impl IdaContext {
 			self.p1_cubies[(i + 1) as usize] = cc;
 		}
 		self.valid1 = self.depth1;
-
 		let p2corn = esym2csym(stbl.eperm_raw2sym[self.p1_cubies[self.depth1 as usize].get_cperm() as usize]) as i32;
 		let p2csym = p2corn & 0xf;
 		let p2corn = p2corn >> 4;
@@ -1024,6 +1133,7 @@ impl IdaContext {
 			self.solution.length = 0;
 			self.solution.urf_idx = self.urf_idx;
 			self.solution.depth1 = self.depth1;
+			self.solution.premv_len = self.premv_len;
 			for i in 0..self.depth1 as i32 + depth2 {
 				self.solution.append_move(self.mv[i as usize]);
 			}
@@ -1041,7 +1151,6 @@ impl IdaContext {
 		1
 	}
 
-	// phase2 方法
 	fn phase2(&mut self,
 			sctx: &StaticContext, stbl: &StaticTables,
 			edge: i32, esym: i32, corn: i32, csym: i32, mid: i32, maxl: i32, depth: i32, lm: i32) -> i32 {
@@ -1087,72 +1196,6 @@ impl IdaContext {
 		}
 		-1
 	}
-}
-
-fn solve_cubie(sctx: &StaticContext, stbl: &StaticTables,
-		cc: &Cubie, target_length: u8) -> String {
-	let mut ctx = IdaContext {
-		mv: [0; 30],
-		allow_shorter: false,
-		depth1: 0,
-		length1: 0,
-		valid1: 0,
-		urf_idx: 0,
-		nodes: [Coord::new(); 20],
-		p1_cubies: [Cubie::new(); 20],
-		urf_cubies: [Cubie::new(); 6],
-		premv: [0; 15],
-		premv_len: 0,
-		max_depth2: 0,
-		target_length: target_length as u8 + 1,
-		probes: 0,
-		min_probes: 0,
-		solution: Solution {
-			depth1: 0,
-			verbose: 0,
-			urf_idx: 0,
-			length: 0,
-			moves: [0; 31],
-		},
-	};
-	let mut cc1 = *cc;
-	let mut cc2 = Cubie::new();
-
-	for i in 0..6 {
-		ctx.urf_cubies[i] = cc1;
-		Cubie::corn_mult(&sctx.symurfi, &cc1, &mut cc2);
-		Cubie::edge_mult(&sctx.symurfi, &cc1, &mut cc2);
-		Cubie::corn_mult(&cc2, &sctx.symurf, &mut cc1);
-		Cubie::edge_mult(&cc2, &sctx.symurf, &mut cc1);
-		if i == 2 {
-			Cubie::inv(&cc1, &mut cc2);
-			cc1 = cc2;
-		}
-	}
-
-	for length1 in 0..21 {
-		ctx.length1 = length1;
-		ctx.max_depth2 = std::cmp::min(MAX_DEPTH2 as i8, ctx.target_length as i8 - ctx.length1 as i8 - 1);
-		ctx.depth1 = ctx.length1 - ctx.premv_len;
-		ctx.allow_shorter = false;
-		for urf_idx in 0..6 {
-			ctx.urf_idx = urf_idx;
-			ctx.p1_cubies[0] = ctx.urf_cubies[ctx.urf_idx as usize];
-			if ctx.nodes[ctx.depth1 as usize + 1].from_cubie(stbl, &ctx.p1_cubies[0]) > ctx.length1 as u16 {
-				continue;
-			}
-			let node = ctx.nodes[ctx.depth1 as usize + 1];
-			let ret = ctx.phase1(sctx, stbl, &node, 0, ctx.depth1 as i32, -1);
-			if ret == 0 {
-				let solbuf = ctx.solution.to_string();
-				#[cfg(debug_assertions)]
-				println!("solution found in {}/{} moves urf={}: {}",
-					ctx.length1, ctx.solution.length, ctx.solution.urf_idx, solbuf);
-				return solbuf;
-			}
-		}
-	}
-	String::from("Error 8")
 }
 
 impl Cubie {
@@ -1299,8 +1342,8 @@ impl Cubie {
 }
 
 lazy_static! {
-	static ref global_sctx: StaticContext = StaticContext::new();
-	static ref global_stbl: StaticTables = StaticTables::new(&global_sctx);
+	static ref global_sctx: Box<StaticContext> = StaticContext::box_new();
+	static ref global_stbl: Box<StaticTables> = StaticTables::box_new(&global_sctx);
 }
 
 pub fn solve(facelet: &String, maxl: u8) -> String {
@@ -1312,7 +1355,8 @@ pub fn solve(facelet: &String, maxl: u8) -> String {
 	if verify < 0 {
 		return String::from("Error ") + &(-verify).to_string();
 	}
-	return solve_cubie(&global_sctx, &global_stbl, &cc, maxl);
+	let mut ctx = IdaContext::new();
+	return ctx.solve_cubie(&global_sctx, &global_stbl, &cc, maxl)
 }
 
 pub fn random_cube() -> String {
@@ -1322,12 +1366,22 @@ pub fn random_cube() -> String {
 }
 
 pub fn from_moves(cube_moves: &String) -> Option<String> {
+	apply_moves(&Cubie::new().to_facelet(), cube_moves)
+}
+
+pub fn apply_moves(facelet: &String, cube_moves: &String) -> Option<String> {
+	let mut cc = Cubie::new();
+	if cc.from_facelet(facelet) < 0 {
+		return None;
+	}
+	let verify = cc.verify();
+	if verify < 0 {
+		return None;
+	}
 	let mut s = cube_moves.trim().chars().peekable();
 	let mut axis = 0;
 	let mut pow = 0;
-	let mut cc = Cubie::new();
 	let mut cd = Cubie::new();
-
 	while let Some(c) = s.next() {
 		match c {
 			'U' | 'R' | 'F' | 'D' | 'L' | 'B' => {
@@ -1350,7 +1404,7 @@ pub fn from_moves(cube_moves: &String) -> Option<String> {
 			'\'' | '-' => pow = (4 - pow) % 4,
 			'3' => pow = pow * 3 % 4,
 			'2' => pow = pow * 2 % 4,
-			'+' | '1' | ' ' => (),
+			'+' | '1' | ' ' | '\t' => (),
 			_ => {
 				return None;
 			}
