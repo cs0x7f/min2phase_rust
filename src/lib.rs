@@ -1368,6 +1368,34 @@ lazy_static! {
 	static ref global_stbl: Box<StaticTables> = StaticTables::box_new(&global_sctx);
 }
 
+
+/// Solve a Rubik's cube represented in facelet
+///
+/// # Arguments
+///
+/// * `facelet` - the Rubik's cube to be solved, represented in facelet
+/// * `maxl` - number of moves to solve the cube, included. 21 or 20 is recommended.
+///
+/// Facelet for the rubik's cube:
+/// ```
+///          +--------+
+///          |U1 U2 U3|
+///          |U4 U5 U6|
+///          |U7 U8 U9|
+/// +--------+--------+--------+--------+
+/// |L1 L2 L3|F1 F2 F3|R1 R2 R3|B1 B2 B3|
+/// |L4 L5 L6|F4 F5 F6|R4 R5 R6|B4 B5 B6|
+/// |L7 L8 L9|F7 F8 F9|R7 R8 R9|B7 B8 B9|
+/// +--------+--------+--------+--------+
+///          |D1 D2 D3|
+///          |D4 D5 D6|
+///          |D7 D8 D9|
+///          +--------+
+/// ```
+/// should be: U1U2...U9R1R2...R9F1..F9D1..D9L1..L9B1..B9
+/// Example, facelet of solved cube is UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB
+///
+/// Return solution moves on success, return "Error " + error_code on failure
 pub fn solve(facelet: &String, maxl: u8) -> String {
 	let mut cc = Cubie::new();
 	if cc.from_facelet(facelet) < 0 {
@@ -1381,16 +1409,32 @@ pub fn solve(facelet: &String, maxl: u8) -> String {
 	return ctx.solve_cubie(&global_sctx, &global_stbl, &cc, std::cmp::min(25, maxl) as i8)
 }
 
+/// Generate a random cube represented in facelet
 pub fn random_cube() -> String {
 	let mut cc = Cubie::new();
 	cc.random_reset();
 	cc.to_facelet()
 }
 
+/// Apply moves to a solved Rubik's cube
+///
+/// # Arguments
+///
+/// * `cube_moves` - should match ```([URFDLB][123'] ?)*```
+///
+/// Return ```facelet``` on success
 pub fn from_moves(cube_moves: &String) -> Option<String> {
 	apply_moves(&Cubie::new().to_facelet(), cube_moves)
 }
 
+/// Apply moves to a Rubik's cube represented by facelet
+///
+/// # Arguments
+///
+/// * `facelet` - the Rubik's cube to be moved, must be a solvable Rubik's cube
+/// * `cube_moves` - should match ```([URFDLB][123'] ?)*```
+///
+/// Return ```facelet``` of the moved cube on success
 pub fn apply_moves(facelet: &String, cube_moves: &String) -> Option<String> {
 	let mut cc = Cubie::new();
 	if cc.from_facelet(facelet) < 0 {
@@ -1441,6 +1485,15 @@ pub fn apply_moves(facelet: &String, cube_moves: &String) -> Option<String> {
 	Some(cc.to_facelet())
 }
 
+/// Generate a random move sequence in specific number of moves
+///
+/// # Arguments
+///
+/// * `n_moves` - number of moves
+///
+/// Return moves, ensure no redaudant moves exists, e.g. "R R", "R L R", etc.
+///
+/// Call ```from_moves(cube_moves)``` to obtain the scrambled cube
 pub fn random_moves(n_moves: u16) -> String {
 	let mut rng = rand::thread_rng();
 	let mut last_axis = 18;
