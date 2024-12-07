@@ -7,6 +7,7 @@ license = "MIT"
 keywords = ["rubik", "cubing", "solving"]
 readme = "README.md"
 description = "An optimized implementation of two-phase algorithm for solving Rubik's cube"
+documentation = "https://docs.rs/min2phase"
 repository = "https://github.com/cs0x7f/min2phase_rust"
 
 [dependencies]
