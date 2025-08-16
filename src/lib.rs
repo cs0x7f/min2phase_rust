@@ -1116,7 +1116,11 @@ impl IdaContext {
 
 	fn init_phase2(&mut self, sctx: &StaticContext, stbl: &StaticTables) -> i8 {
 		self.probes += 1;
-		let mut cc = Cubie::new();
+		let mut cc = if self.depth1 == 0 {
+			self.p1_cubies[0]
+		} else {
+			Cubie::new()
+		};
 		for i in self.valid1 as usize..self.depth1 as usize {
 			Cubie::corn_mult(&self.p1_cubies[i], &sctx.movecube[self.mv[i] as usize], &mut cc);
 			Cubie::edge_mult(&self.p1_cubies[i], &sctx.movecube[self.mv[i] as usize], &mut cc);
@@ -1377,7 +1381,7 @@ lazy_static! {
 /// * `maxl` - number of moves to solve the cube, included. 21 or 20 is recommended.
 ///
 /// Facelet for the rubik's cube:
-/// ```
+/// ```text
 ///          +--------+
 ///          |U1 U2 U3|
 ///          |U4 U5 U6|
