@@ -39,7 +39,7 @@ checksum = "09d6582e104315a817dff97f75133544b2e094ee22447d2acf4a74e189ba06fc"
 
 [[package]]
 name = "min2phase"
-version = "0.2.1"
+version = "0.2.4"
 dependencies = [
  "lazy_static",
  "rand",
